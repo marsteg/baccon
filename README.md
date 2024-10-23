@@ -1,6 +1,12 @@
-# This is the Readme file for the Bac(kend) con(nection) Tester
+# Welcome to Bac(kend) con(nection Tester)!
 
-The Baccon Tester is a go webserver that has different handler endpoints to create, delete and do simple tests on connections to a backend service.
+The Baccon Tester is a go webserver that has different handler endpoints to create and delete connections and do simple tests to a backend service (currently only postgresql databases)
+
+## Installation
+
+Download the Git repository and run: 
+    go run .
+
 
 
 ## Available Handlers 

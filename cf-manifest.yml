@@ -1,0 +1,7 @@
+---
+applications:
+  - name: baccon
+    memory: 128M
+    instances: 1
+    random-route: false
+    path: ./

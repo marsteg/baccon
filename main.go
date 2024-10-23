@@ -23,6 +23,9 @@ type Connection struct {
 var connections = make(map[string]Connection)
 
 func main() {
+	http.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "You have reached the baccon!")
+	})
 	http.HandleFunc("GET /postgres/", GetPostgres)
 	http.HandleFunc("GET /postgres/{id}", GetPostgresID)
 	http.HandleFunc("POST /postgres/", CreatePostgres)
