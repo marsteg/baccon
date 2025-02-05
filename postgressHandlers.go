@@ -10,11 +10,12 @@ import (
 
 	"github.com/go-pg/pg/v10"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func GetPostgres(w http.ResponseWriter, r *http.Request) {
 	var connList []Connection
-	for _, conn := range connections {
+	for _, conn := range Connections {
 		connList = append(connList, conn)
 	}
 
@@ -49,6 +50,27 @@ func CreatePostgres(w http.ResponseWriter, r *http.Request) {
 		Password: conn.Password,
 		Database: conn.Database,
 	})
+	conn.ProcessedRequests = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: fmt.Sprintf("conn_%s_processed_requests", conn.Name),
+		Help: "The total number of processed requests of this Connection",
+	})
+	prometheus.MustRegister(conn.ProcessedRequests)
+
+	conn.LastWriteRequestDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    fmt.Sprintf("conn_%s_last_write_request_duration", conn.Name),
+		Help:    "The last write request duration of this Connection",
+		Buckets: []float64{0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 1, 2, 2.5, 5, 10},
+	})
+	prometheus.MustRegister(conn.LastWriteRequestDuration)
+
+	conn.LastReadRequestDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    fmt.Sprintf("conn_%s_last_read_request_duration", conn.Name),
+		Help:    "The last read request duration of this Connection",
+		Buckets: []float64{0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 1, 2, 2.5, 5, 10},
+	})
+	prometheus.MustRegister(conn.LastReadRequestDuration)
+
+	timer := prometheus.NewTimer(conn.LastWriteRequestDuration)
 
 	err = conn.PostgresConn.Ping(r.Context())
 	if err != nil {
@@ -57,21 +79,21 @@ func CreatePostgres(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.Status = "connected"
 
-	connections[conn.ID] = conn
-
 	// create a new table
-	_, err = conn.PostgresConn.Exec("CREATE TABLE IF NOT EXISTS baccon (id serial PRIMARY KEY, Tests VARCHAR(50));")
+	_, err = conn.PostgresConn.Exec("CREATE TABLE IF NOT EXISTS " + conn.Name + " (id serial PRIMARY KEY, Tests VARCHAR(50));")
 	if err != nil {
 		http.Error(w, "Cannot create table: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	conn.ProcessedRequests.Inc()
+	timer.ObserveDuration()
 
 	jsonData, err := json.Marshal(conn)
 	if err != nil {
 		http.Error(w, "Error converting data to JSON", http.StatusInternalServerError)
 		return
 	}
-
+	Connections[conn.ID] = conn
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonData)
 }
@@ -80,7 +102,7 @@ func GetPostgresID(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Path[len("/postgres/"):]
 	fmt.Printf("GET ID Incoming Request body: %s\n", id)
 
-	conn, exists := connections[id]
+	conn, exists := Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return
@@ -100,19 +122,26 @@ func DeletePostgres(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Path[len("/postgres/"):]
 	fmt.Printf("DEL PG Incoming Request body: %s\n", id)
 
-	conn, exists := connections[id]
+	conn, exists := Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return
 	}
 
-	err := conn.PostgresConn.Close()
+	_, err := conn.PostgresConn.Exec("DROP TABLE " + conn.Name + ";")
+	if err != nil {
+		http.Error(w, "Cannot insert data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = conn.PostgresConn.Close()
 	if err != nil {
 		http.Error(w, "Cannot close connection: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	delete(connections, id)
+	conn.ProcessedRequests.Inc()
+	delete(Connections, id)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -122,26 +151,31 @@ func TestWritePostgres(w http.ResponseWriter, r *http.Request) {
 	id = id[:len(id)-len("/write")]
 	fmt.Printf("Test Write  PG Incoming Request body: %s\n", id)
 
-	conn, exists := connections[id]
+	conn, exists := Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return
 	}
 	// create Table with example data
+	timer := prometheus.NewTimer(conn.LastWriteRequestDuration)
 	t := time.Now().UTC()
 	ts := t.Format("2006-01-02 15:04:05")
-	_, err := conn.PostgresConn.Exec("INSERT INTO baccon (Tests) VALUES ('" + ts + "');")
+	_, err := conn.PostgresConn.Exec("INSERT INTO " + conn.Name + " (Tests) VALUES ('" + ts + "');")
 	if err != nil {
 		http.Error(w, "Cannot insert data: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	conn.ProcessedRequests.Inc()
+	timer.ObserveDuration()
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 }
 
 type PostgresQueryResponse struct {
-	ResponseRow  map[int]string `json:"response_row"`
-	RowsReturned int            `json:"rows_returned"`
+	Data         []interface{} `json:"data"`
+	RowsReturned int           `json:"rows_returned"`
 }
 
 func TestQueryPostgres(w http.ResponseWriter, r *http.Request) {
@@ -149,27 +183,32 @@ func TestQueryPostgres(w http.ResponseWriter, r *http.Request) {
 	id = id[:len(id)-len("/query")]
 	fmt.Printf("Test Query PG Incoming Request body: %s\n", id)
 
-	conn, exists := connections[id]
+	conn, exists := Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return
 	}
 	var response PostgresQueryResponse
-	var name string
-	result, err := conn.PostgresConn.Query(pg.Scan(&name), "SELECT Tests FROM baccon;")
+	var results []map[string]interface{}
+	timer := prometheus.NewTimer(conn.LastReadRequestDuration)
+	_, err := conn.PostgresConn.Query(&results, "SELECT Tests FROM "+conn.Name+";")
 	if err != nil {
 		http.Error(w, "Cannot query data: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	response.RowsReturned = result.RowsReturned()
-	// TODO: find a way to add the actual returned data to the response
+	response.RowsReturned = len(results)
+	response.Data = make([]interface{}, len(results))
+	for i, v := range results {
+		response.Data[i] = v
+	}
 
 	jsonData, err := json.Marshal(response)
 	if err != nil {
 		http.Error(w, "Error converting data to JSON", http.StatusInternalServerError)
 		return
 	}
-
+	timer.ObserveDuration()
+	conn.ProcessedRequests.Inc()
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonData)
 }
