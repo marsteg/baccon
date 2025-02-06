@@ -13,9 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func GetPostgres(w http.ResponseWriter, r *http.Request) {
+func (c apiCfg) GetPostgres(w http.ResponseWriter, r *http.Request) {
 	var connList []Connection
-	for _, conn := range Connections {
+	for _, conn := range c.Connections {
 		connList = append(connList, conn)
 	}
 
@@ -29,7 +29,7 @@ func GetPostgres(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonData)
 }
 
-func CreatePostgres(w http.ResponseWriter, r *http.Request) {
+func (c apiCfg) CreatePostgres(w http.ResponseWriter, r *http.Request) {
 	var conn Connection
 	res, err := httputil.DumpRequest(r, true)
 	if err != nil {
@@ -93,16 +93,16 @@ func CreatePostgres(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error converting data to JSON", http.StatusInternalServerError)
 		return
 	}
-	Connections[conn.ID] = conn
+	c.Connections[conn.ID] = conn
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonData)
 }
 
-func GetPostgresID(w http.ResponseWriter, r *http.Request) {
+func (c apiCfg) GetPostgresID(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Path[len("/postgres/"):]
 	fmt.Printf("GET ID Incoming Request body: %s\n", id)
 
-	conn, exists := Connections[id]
+	conn, exists := c.Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return
@@ -118,11 +118,11 @@ func GetPostgresID(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonData)
 }
 
-func DeletePostgres(w http.ResponseWriter, r *http.Request) {
+func (c apiCfg) DeletePostgres(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Path[len("/postgres/"):]
 	fmt.Printf("DEL PG Incoming Request body: %s\n", id)
 
-	conn, exists := Connections[id]
+	conn, exists := c.Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return
@@ -141,17 +141,17 @@ func DeletePostgres(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn.ProcessedRequests.Inc()
-	delete(Connections, id)
+	delete(c.Connections, id)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func TestWritePostgres(w http.ResponseWriter, r *http.Request) {
+func (c apiCfg) TestWritePostgres(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Path[len("/postgres/"):]
 	id = id[:len(id)-len("/write")]
 	fmt.Printf("Test Write  PG Incoming Request body: %s\n", id)
 
-	conn, exists := Connections[id]
+	conn, exists := c.Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return
@@ -178,12 +178,12 @@ type PostgresQueryResponse struct {
 	RowsReturned int           `json:"rows_returned"`
 }
 
-func TestQueryPostgres(w http.ResponseWriter, r *http.Request) {
+func (c apiCfg) TestQueryPostgres(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Path[len("/postgres/"):]
 	id = id[:len(id)-len("/query")]
 	fmt.Printf("Test Query PG Incoming Request body: %s\n", id)
 
-	conn, exists := Connections[id]
+	conn, exists := c.Connections[id]
 	if !exists {
 		http.Error(w, "Connection not found", http.StatusNotFound)
 		return

@@ -25,18 +25,29 @@ type Connection struct {
 	LastReadRequestDuration  prometheus.Histogram `json:"last_read_request,omitempty"`
 }
 
-var Connections = make(map[string]Connection)
+type apiCfg struct {
+	Connections map[string]Connection `json:"connections"`
+}
+
+func initMap() apiCfg {
+	Connections := make(map[string]Connection)
+	apiCfg := apiCfg{
+		Connections: Connections,
+	}
+	return apiCfg
+}
 
 func main() {
+	cfg := initMap()
 	http.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "You have reached the baccon!")
 	})
-	http.HandleFunc("GET /postgres/", GetPostgres)
-	http.HandleFunc("GET /postgres/{id}", GetPostgresID)
-	http.HandleFunc("POST /postgres/", CreatePostgres)
-	http.HandleFunc("DELETE /postgres/{id}", DeletePostgres)
-	http.HandleFunc("GET /postgres/{id}/write", TestWritePostgres)
-	http.HandleFunc("GET /postgres/{id}/query", TestQueryPostgres)
+	http.HandleFunc("GET /postgres/", cfg.GetPostgres)
+	http.HandleFunc("GET /postgres/{id}", cfg.GetPostgresID)
+	http.HandleFunc("POST /postgres/", cfg.CreatePostgres)
+	http.HandleFunc("DELETE /postgres/{id}", cfg.DeletePostgres)
+	http.HandleFunc("GET /postgres/{id}/write", cfg.TestWritePostgres)
+	http.HandleFunc("GET /postgres/{id}/query", cfg.TestQueryPostgres)
 
 	// Prometheus Handler
 	http.Handle("GET /metrics", promhttp.Handler())
